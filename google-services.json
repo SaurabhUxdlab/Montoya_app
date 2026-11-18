@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "752477033977",
+    "project_id": "montaya-tennis",
+    "storage_bucket": "montaya-tennis.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:752477033977:android:8c2ea290a0e772bd9dd928",
+        "android_client_info": {
+          "package_name": "com.montoya.tenniscoach"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBfjPo0U_ec10E_YfLx-jP6nsPtlvbHEWY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:752477033977:android:8c2ea290a0e772bd9dd928",
+        "android_client_info": {
+          "package_name": "com.montoyatennis.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBfjPo0U_ec10E_YfLx-jP6nsPtlvbHEWY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

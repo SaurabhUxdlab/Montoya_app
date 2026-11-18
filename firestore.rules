@@ -1,0 +1,364 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user document exists in users collection
+    function userDocExists() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Helper function to get user document data safely
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Helper function to check for Administrator role
+    function isAdmin() {
+      return isAuthenticated() && (
+        (userDocExists() && 'role' in getUserData() && (
+          getUserData().role in [
+            'Admin', 'admin', 'ADMIN',
+            'Administrator', 'administrator', 'ADMINISTRATOR',
+            'Head Coach', 'head coach', 'Head coach', 'HEAD COACH',
+            'superadmin', 'Superadmin', 'SUPERADMIN'
+          ]
+        )) ||
+        (request.auth.token != null && (
+          ('role' in request.auth.token && request.auth.token.role in [
+            'Admin', 'admin', 'ADMIN',
+            'Administrator', 'administrator', 'ADMINISTRATOR',
+            'Head Coach', 'head coach', 'Head coach', 'HEAD COACH',
+            'superadmin', 'Superadmin', 'SUPERADMIN'
+          ]) ||
+          ('admin' in request.auth.token && request.auth.token.admin == true)
+        ))
+      );
+    }
+
+    // Helper function to check for Coach role
+    function isCoach() {
+      return isAuthenticated() && (
+        (userDocExists() && 'role' in getUserData() && (
+          getUserData().role in [
+            'Coach', 'coach', 'COACH',
+            'Instructor', 'instructor', 'INSTRUCTOR'
+          ]
+        )) ||
+        (request.auth.token != null && 'role' in request.auth.token && (
+          request.auth.token.role in [
+            'Coach', 'coach', 'COACH',
+            'Instructor', 'instructor', 'INSTRUCTOR'
+          ]
+        ))
+      );
+    }
+
+    // Helper function to check if user is the assigned coach on a record
+    function isAssignedCoach(data) {
+      return isCoach() && (
+        data.coachId == request.auth.uid ||
+        data.coachId == ('coach-' + request.auth.uid) ||
+        (request.auth.token != null && 'email' in request.auth.token && data.coachEmail == request.auth.token.email)
+      );
+    }
+
+    // 1. Venues / Locations collection
+    match /venues/{venueId} {
+      // Locations can be viewed by authenticated users and members for scheduling
+      allow read: if isAuthenticated() || true;
+      // Adding, modifying, or deleting locations is restricted to Administrators
+      allow create, update, delete: if isAdmin();
+
+      // 2. Courts subcollection
+      match /courts/{courtId} {
+        allow read: if isAuthenticated() || true;
+        // Adding, modifying, or deleting courts is restricted to Administrators
+        allow create, update, delete: if isAdmin();
+      }
+
+      // 3. Blackouts & Closures subcollection
+      match /blackouts/{blackoutId} {
+        allow read: if isAuthenticated() || true;
+        // Adding, modifying, or deleting blackout dates is restricted to Administrators
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    // 3. Bookings / Resource Schedules collection
+    match /bookings/{bookingId} {
+      // Admins can read all.
+      // Coaches can read bookings assigned to them.
+      // Members/Users can read their own bookings.
+      allow read: if isAuthenticated();
+      
+      // Creating bookings:
+      // Admins can create any booking.
+      // Users/Coaches can create their own booking.
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        request.resource.data.userId == request.auth.uid ||
+        (isCoach() && request.resource.data.coachId == request.auth.uid)
+      );
+
+      // Updating / deleting bookings:
+      // Admins can update/delete any booking.
+      // Users can update/delete their own bookings.
+      // Assigned coaches can update status of their assigned sessions.
+      allow update, delete: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.userId == request.auth.uid ||
+        isAssignedCoach(resource.data)
+      );
+    }
+
+    // 4. Attendance & Coach Shifts collections
+    match /attendance/{attendanceId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.coachId == request.auth.uid
+      );
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.coachId == request.auth.uid ||
+        (resource != null && (resource.data.userId == request.auth.uid || resource.data.coachId == request.auth.uid))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /Attendence/{attendanceId} {
+      allow read, write: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    match /coachShifts/{shiftId} {
+      allow read, write: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    match /coachshifts/{shiftId} {
+      allow read, write: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // 5. Maintenance records collection
+    match /maintenance/{maintenanceId} {
+      allow read: if isAuthenticated() || true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 6. Seasonal Schedule Templates collection
+    match /scheduleTemplates/{templateId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 7. Users collection (Private profiles, roles, and timesheets)
+    match /users/{userId} {
+      // Admins have access to all user profiles, working hours, and settings.
+      // Coaches / Users can ONLY access their own user document.
+      allow read: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+      allow write: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+
+      // 7a. User FCM Device Tokens subcollection
+      match /fcmTokens/{tokenDocId} {
+        // Users can manage their own device tokens; Admins can read for administrative checks
+        allow read: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+        allow write: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+      }
+
+      // 7b. User In-App Notifications subcollection
+      match /notifications/{notificationId} {
+        // Users can read and update (mark read/unread) their own notifications
+        allow read: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+        allow update: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+        // Creation and deletion allowed for admins or the document owner
+        allow create, delete: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+      }
+
+      // Private direct messages.
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+        allow create: if isAuthenticated() && (
+          (isAdmin() && request.resource.data.sender == "admin") ||
+          (request.auth.uid == userId && request.resource.data.sender != "admin")
+        );
+        allow update: if isAuthenticated() && (
+          isAdmin() ||
+          (
+            request.auth.uid == userId &&
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "readAt"]) ||
+              (resource.data.sender != "admin" && request.resource.data.diff(resource.data).affectedKeys().hasAny(["text", "updatedAt", "isEdited", "attachments"]))
+            )
+          )
+        );
+        allow delete: if isAuthenticated() && (
+          isAdmin() ||
+          (request.auth.uid == userId && resource.data.sender != "admin")
+        );
+      }
+    }
+
+    // 8. Schedules, Sessions & Lessons collections (operational records)
+    match /schedules/{scheduleId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated() && (isAdmin() || request.resource.data.coachId == request.auth.uid);
+    }
+
+    match /sessions/{sessionId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated() && (isAdmin() || request.resource.data.assignedCoachId == request.auth.uid);
+    }
+
+    match /lessons/{lessonId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated() && (isAdmin() || request.resource.data.assignedCoachId == request.auth.uid);
+    }
+
+    // Coaches collection: allow Admins full access, and allow Coaches to create/update their own profile linked by UID / userId / coachId
+    match /coaches/{coachId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        coachId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.coachId == request.auth.uid
+      );
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        coachId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.coachId == request.auth.uid ||
+        (resource != null && resource.data.userId == request.auth.uid) ||
+        (resource != null && resource.data.coachId == request.auth.uid)
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 9. Coach Availability collection
+    match /coach_availability/{availId} {
+      // Authenticated dashboard users can read availability records
+      allow read: if isAuthenticated();
+      // Admins can create, update, delete any availability record; Coaches can manage their own
+      allow create, update, delete: if isAuthenticated() && (
+        isAdmin() ||
+        isCoach()
+      );
+    }
+
+    // 10. Private Lessons & Coach Assignment collection
+    match /private_lessons/{lessonId} {
+      // Authenticated users can read private lesson requests
+      allow read: if isAuthenticated();
+      // Admins can create, update, delete any request; Coaches can update assigned requests
+      allow create, update, delete: if isAuthenticated() && (
+        isAdmin() ||
+        isCoach()
+      );
+    }
+
+    // 11. Public Coach Availability Form Submissions
+    match /coachAvailability/{docId} {
+      allow read, write: if true;
+    }
+
+    match /coachAvailabilitySubmissions/{submissionId} {
+      allow read, write: if true;
+    }
+
+    // 12. Coach Shifts / Roster collection
+    match /coachShifts/{shiftId} {
+      allow read, write: if true;
+    }
+
+    match /coach_shifts/{shiftId} {
+      allow read, write: if true;
+    }
+
+    // 13. Mail collection (Firebase Trigger Email from Firestore extension)
+    match /mail/{emailId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 14. Email Templates collection (Dynamic email templates management)
+    match /emailTemplates/{templateId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 15. Broadcast Announcements History collection
+    match /broadcastHistory/{broadcastId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 16. System Settings collection (e.g. settings/welcome_email)
+    match /settings/{settingId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 17. Programs Module collections
+    match /programs/{programId} {
+      allow read: if isAuthenticated() || true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /fallPrograms/{programId} {
+      allow read: if isAuthenticated() || true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /programTypes/{typeId} {
+      allow read: if isAuthenticated() || true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /locations/{locationId} {
+      allow read: if isAuthenticated() || true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /content/{docId} {
+      allow read: if isAuthenticated() || true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /programRegistrations/{registrationId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (isAdmin() || request.auth.uid == resource.data.userId);
+    }
+
+    match /programAttendance/{attendanceId} {
+      allow read, write: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    match /programWaitlists/{waitlistId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (isAdmin() || request.auth.uid == resource.data.userId);
+    }
+
+    match /customers/{customerId} {
+      allow read, write: if isAuthenticated() || true;
+      allow delete: if isAuthenticated() || true;
+    }
+
+    match /enquiries/{enquiryId} {
+      allow read, write: if isAuthenticated() || true;
+      allow create: if true;
+    }
+
+    // Default deny all other unspecified paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
